@@ -1,10 +1,9 @@
-import gymnasium as gym
-
 import sys, os
 maze_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'maze')
 if maze_path not in sys.path:
     sys.path.append(maze_path)
 
+import gymnasium as gym
 import gym_maze
 from gym_maze.utils.play_discrete import play_discrete
 
