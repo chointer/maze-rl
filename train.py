@@ -1,5 +1,6 @@
 import gymnasium as gym
 from gymnasium.wrappers.record_episode_statistics import RecordEpisodeStatistics
+from gymnasium.wrappers.autoreset import AutoResetWrapper
 
 import sys, os
 maze_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'maze')
@@ -71,6 +72,7 @@ if __name__ == "__main__":
     # Setting: Env
     env = gym.make('gym_maze/Maze-v0', render_mode="rgb_array", height_range=[5, 20], width_range=[5, 20])
     env = RecordEpisodeStatistics(env)
+    env = AutoResetWrapper(env)
 
     # Setting: Networks
     q_network = QNetwork(env).to(device)
@@ -101,16 +103,8 @@ if __name__ == "__main__":
 
         # Execute the game
         next_obs, reward, termination, trunction, info = env.step(action)   # np.ndarray, float, bool, bool, dict
-        if termination:
-            print("termination", global_step, info)
 
+        # Episode End Handling
         if "final_info" in info:
-            if info and "episode" in info:
-                print(f"global_step={global_step}, episodic_return={info['episode']['r']}")
-                # TODO: torch.utils.tensorboard.SummaryWrieter
-            assert False
-
-
-
-
-    # TODO: 환경 상호작용, final_info쪽 구현, 학습 파트까지
+            print(f"global_step={global_step}, episodic_return={info['final_info']['episode']['r']}")
+            # TODO: torch.utils.tensorboard.SummaryWrieter
