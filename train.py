@@ -102,9 +102,17 @@ if __name__ == "__main__":
             action = torch.argmax(q_value, dim=1).item()     # return ex. [1]
 
         # Execute the game
-        next_obs, reward, termination, trunction, info = env.step(action)   # np.ndarray, float, bool, bool, dict
+        next_obs, reward, termination, truncation, info = env.step(action)   # np.ndarray, float, bool, bool, dict
 
         # Episode End Handling
         if "final_info" in info:
             print(f"global_step={global_step}, episodic_return={info['final_info']['episode']['r']}")
             # TODO: torch.utils.tensorboard.SummaryWrieter
+        
+        real_next_obs = next_obs.copy() if not truncation else info["final_observation"]
+        # trunctation은 강제 종료한 상황이므로 next_obs를 사용하여 target Q를 계산해야한다. 때문에, 실제 final_observation을 가져온다. 
+        # termination은 실제 환경이 종료된 상황으로, target Q 계산에 next_obs를 사용하지 않는다. 그래서 따로 final_observation으로 바꿔주지 않는 것 같다.
+
+        rb.add(obs, real_next_obs, action, reward, termination, info)       # add(obs, next_obs, action, reward, done, infos). truncation으로 끝나면, next_obs를 사용해서 target Q를 계산해야하므로, done에는 truncation만 반영하는 같다.
+
+        obs = next_obs
