@@ -7,5 +7,5 @@ import gymnasium as gym
 import gym_maze
 from gym_maze.utils.play_discrete import play_discrete
 
-env = gym.make('gym_maze/Maze-v0', render_mode="rgb_array", height_range=[5, 20], width_range=[5, 20])
+env = gym.make('gym_maze/Maze-v0', render_mode="rgb_array", height_range=[5, 20], width_range=[5, 20], manual_mode=True)
 play_discrete(env, noop=-1)
