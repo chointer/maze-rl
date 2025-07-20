@@ -1,16 +1,19 @@
 import gymnasium as gym
 from gymnasium.wrappers.record_episode_statistics import RecordEpisodeStatistics
 from gymnasium.wrappers.autoreset import AutoResetWrapper
+from gymnasium.wrappers.time_limit import TimeLimit
 
+import time
+from tqdm import tqdm
 import sys, os
 maze_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'maze')
 if maze_path not in sys.path:
     sys.path.append(maze_path)
 import gym_maze
-#from gym_maze.utils.play_discrete import play_discrete
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 import torch.optim as optim
 from stable_baselines3.common.buffers import ReplayBuffer
 import numpy as np
@@ -41,21 +44,32 @@ def linear_schedule(start_e: float, end_e: float, duration: int, t: int):
 
 
 if __name__ == "__main__":
-    # arguments
+
+    ### arguments ###
     seed = 42
     run_name = "maze_seed42_0"
     track = False
     cuda = False
 
     learning_rate = 1e-4
-    buffer_size = 1000000
+    buffer_size = 100000
     total_timesteps = 10000000
+    learning_starts = 80000
+    train_frequency = 4
+    trunctaion_limit = 1000
 
     # arguments: Epsilon Greedy
     start_e = 1
     end_e = 0.01
     exploration_fraction = 0.10
 
+    # arguments: Training
+    batch_size = 8
+    gamma = 0.99
+    target_network_frequency = 1000
+    tau = 1.0
+
+    ### Initialize ###
     # Train Track
     if track:
         import wandb
@@ -69,18 +83,19 @@ if __name__ == "__main__":
 
     device = torch.device("cuda" if torch.cuda.is_available() and cuda else "cpu")
 
-    # Setting: Env
+    # Initialize: Env
     env = gym.make('gym_maze/Maze-v0', render_mode="rgb_array", height_range=[5, 20], width_range=[5, 20])
+    env = TimeLimit(env, trunctaion_limit)
     env = RecordEpisodeStatistics(env)
     env = AutoResetWrapper(env)
 
-    # Setting: Networks
+    # Initialize: Networks
     q_network = QNetwork(env).to(device)
     optimizer = optim.Adam(q_network.parameters(), lr=learning_rate)
     target_network = QNetwork(env).to(device)
     target_network.load_state_dict(q_network.state_dict())
     
-    # Setting: Replay Buffer
+    # Initialize: Replay Buffer
     rb = ReplayBuffer(
         buffer_size,                   # Buffer Size
         env.observation_space,      # Observation Space
@@ -89,30 +104,76 @@ if __name__ == "__main__":
         optimize_memory_usage=True,
         handle_timeout_termination=False,
     )
+    start_time = time.time()
 
-    # Start
     obs, _ = env.reset(seed=seed)       # return obs, info
-    for global_step in range(total_timesteps):
+
+    for global_step in tqdm(range(total_timesteps)):
+        ### Env. Interaction ###
         epsilon = linear_schedule(start_e, end_e, exploration_fraction * total_timesteps, global_step)      # 전체 학습 스텝의 10% 동안 start_e에서 end_e까지 선형으로 변한다.
         if np_rng.random() < epsilon:
             action = env.action_space.sample()
         else:
             obs_tensor = torch.from_numpy(obs).float().permute(2, 0, 1).unsqueeze(0).to(device)
             q_value = q_network(obs_tensor)
-            action = torch.argmax(q_value, dim=1).item()     # return ex. [1]
+            action = torch.argmax(q_value, dim=1).item()
+            action -= 1
+            # TODO. action은 -1부터 시작하는데, Qnetwork에서 행동 index는 0부터 시작한다. 지금은 index에 1을 빼줌으로써 맞춰줬지만, 나중에 환경에서 행동이 0부터 시작하게 수정하면 편할 것이다.
 
         # Execute the game
         next_obs, reward, termination, truncation, info = env.step(action)   # np.ndarray, float, bool, bool, dict
 
         # Episode End Handling
         if "final_info" in info:
-            print(f"global_step={global_step}, episodic_return={info['final_info']['episode']['r']}")
+            print(f"global_step={global_step}, episodic_return={info['final_info']['episode']['r']}, moves={info['final_info']['move_count']}, newsize={env.maze_width}")
             # TODO: torch.utils.tensorboard.SummaryWrieter
-        
+
         real_next_obs = next_obs.copy() if not truncation else info["final_observation"]
         # trunctation은 강제 종료한 상황이므로 next_obs를 사용하여 target Q를 계산해야한다. 때문에, 실제 final_observation을 가져온다. 
         # termination은 실제 환경이 종료된 상황으로, target Q 계산에 next_obs를 사용하지 않는다. 그래서 따로 final_observation으로 바꿔주지 않는 것 같다.
 
-        rb.add(obs, real_next_obs, action, reward, termination, info)       # add(obs, next_obs, action, reward, done, infos). truncation으로 끝나면, next_obs를 사용해서 target Q를 계산해야하므로, done에는 truncation만 반영하는 같다.
+        # replay buffer
+        if isinstance(action, int):
+            action = np.array([[action]])
+        if isinstance(reward, float):
+            reward = np.array([[reward]])
+        if isinstance(termination, bool):
+            termination = np.array([[termination]])
 
+        rb.add(obs, real_next_obs, action, reward, termination, info)       # add(obs, next_obs, action, reward, done, infos). truncation으로 끝나면, next_obs를 사용해서 target Q를 계산해야하므로, done에는 truncation만 반영하는 같다.
+        
         obs = next_obs
+
+        ### Train ###
+        if global_step > learning_starts:
+            if global_step % train_frequency == 0:
+                data = rb.sample(batch_size)
+                mapped_actions_indices = (data.actions + 1).long()
+
+                with torch.no_grad():
+                    next_obs_tensor_batch = data.next_observations.float().permute(0, 3, 1, 2).to(device)
+                    target_max, _ = target_network(next_obs_tensor_batch).max(dim=1)
+                    td_target = data.rewards.flatten() + gamma * target_max * (1 - data.dones.flatten())
+                obs_tensor_batch = data.observations.float().permute(0, 3, 1, 2).to(device)
+                old_val = q_network(obs_tensor_batch).gather(1, mapped_actions_indices).squeeze()
+                loss = F.mse_loss(td_target, old_val)
+
+                if global_step % 100 == 0:
+                    #desc_text[1] = f"SPS: {global_step / (time.time() - start_time):.1f}"
+                    # TODO logging
+                    pass
+                
+                # Optimze
+                optimizer.zero_grad()
+                loss.backward()
+                optimizer.step()
+            
+            # Update Target Network
+            if global_step % target_network_frequency == 0:
+                for target_network_param, q_network_param in zip(target_network.parameters(), q_network.parameters()):
+                    target_network_param.data.copy_(
+                        tau * q_network_param.data + (1.0 - tau) * target_network_param.data
+                    )
+    
+    env.close()
+    # TODO. writer.close()
