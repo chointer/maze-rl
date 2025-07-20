@@ -2,6 +2,7 @@ import gymnasium as gym
 from gymnasium.wrappers.record_episode_statistics import RecordEpisodeStatistics
 from gymnasium.wrappers.autoreset import AutoResetWrapper
 from gymnasium.wrappers.time_limit import TimeLimit
+from stable_baselines3.common.buffers import ReplayBuffer
 
 import time
 from tqdm import tqdm
@@ -15,7 +16,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
-from stable_baselines3.common.buffers import ReplayBuffer
+from torch.utils.tensorboard import SummaryWriter
 import numpy as np
 
 class QNetwork(nn.Module):
@@ -46,6 +47,7 @@ def linear_schedule(start_e: float, end_e: float, duration: int, t: int):
 if __name__ == "__main__":
 
     ### arguments ###
+    run_name = "first_test"
     seed = 42
     run_name = "maze_seed42_0"
     track = False
@@ -70,10 +72,9 @@ if __name__ == "__main__":
     tau = 1.0
 
     ### Initialize ###
-    # Train Track
-    if track:
-        import wandb
-        # TODO
+    # if track: import wandb
+    
+    writer = SummaryWriter(f"runs/{run_name}")
     
     # Seed
     #random.seed(seed)
@@ -126,7 +127,8 @@ if __name__ == "__main__":
         # Episode End Handling
         if "final_info" in info:
             print(f"global_step={global_step}, episodic_return={info['final_info']['episode']['r']}, moves={info['final_info']['move_count']}, newsize={env.maze_width}")
-            # TODO: torch.utils.tensorboard.SummaryWrieter
+            writer.add_scalar("charts/episodic_return", info["episode"]["r"], global_step)
+            writer.add_scalar("charts/episodic_length", info["episode"]["l"], global_step)
 
         real_next_obs = next_obs.copy() if not truncation else info["final_observation"]
         # trunctation은 강제 종료한 상황이므로 next_obs를 사용하여 target Q를 계산해야한다. 때문에, 실제 final_observation을 가져온다. 
@@ -159,9 +161,9 @@ if __name__ == "__main__":
                 loss = F.mse_loss(td_target, old_val)
 
                 if global_step % 100 == 0:
-                    #desc_text[1] = f"SPS: {global_step / (time.time() - start_time):.1f}"
-                    # TODO logging
-                    pass
+                    writer.add_scalar("losses/td_loss", loss, global_step)
+                    writer.add_scalar("losses/q_values", old_val.mean().item(), global_step)
+                    writer.add_scalar("charts/SPS", int(global_step / (time.time() - start_time)))
                 
                 # Optimze
                 optimizer.zero_grad()
@@ -176,4 +178,4 @@ if __name__ == "__main__":
                     )
     
     env.close()
-    # TODO. writer.close()
+    writer.close()
