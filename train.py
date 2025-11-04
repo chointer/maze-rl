@@ -27,12 +27,12 @@ class QNetwork(nn.Module):
             nn.ReLU(),
             nn.Conv2d(32, 64, 4, stride=2, padding=2),
             nn.ReLU(),
-            nn.Conv2d(64, 64, 3, stride=1),
+            nn.Conv2d(64, 64, 2, stride=1), #nn.Conv2d(64, 64, 3, stride=1),
             nn.ReLU(),
             nn.Flatten(),
-            nn.Linear(256, 128),
+            nn.Linear(64, 32),#nn.Linear(256, 128),
             nn.ReLU(),
-            nn.Linear(128, env.action_space.n),
+            nn.Linear(32, env.action_space.n),#nn.Linear(128, env.action_space.n),
         )
 
     def forward(self, x):
@@ -49,7 +49,7 @@ if __name__ == "__main__":
     ### arguments ###
     run_name = "first_test"
     seed = 42
-    run_name = "maze_seed42_0"
+    run_name = "maze_seed42_1"
     track = False
     cuda = False
 
@@ -85,7 +85,7 @@ if __name__ == "__main__":
     device = torch.device("cuda" if torch.cuda.is_available() and cuda else "cpu")
 
     # Initialize: Env
-    env = gym.make('gym_maze/Maze-v0', render_mode="rgb_array", height_range=[5, 20], width_range=[5, 20])
+    env = gym.make('gym_maze/Maze-v0', render_mode="rgb_array", height_range=[5, 10], width_range=[5, 10])
     env = TimeLimit(env, trunctaion_limit)
     env = RecordEpisodeStatistics(env)
     env = AutoResetWrapper(env)
@@ -126,9 +126,9 @@ if __name__ == "__main__":
 
         # Episode End Handling
         if "final_info" in info:
-            print(f"global_step={global_step}, episodic_return={info['final_info']['episode']['r']}, moves={info['final_info']['move_count']}, newsize={env.maze_width}")
-            writer.add_scalar("charts/episodic_return", info["episode"]["r"], global_step)
-            writer.add_scalar("charts/episodic_length", info["episode"]["l"], global_step)
+            #print(f"global_step={global_step}, episodic_return={info['final_info']['episode']['r']}, moves={info['final_info']['move_count']}, newsize={env.maze_width}")
+            writer.add_scalar("charts/episodic_return", info['final_info']["episode"]["r"], global_step)
+            writer.add_scalar("charts/episodic_length", info['final_info']["episode"]["l"], global_step)
 
         real_next_obs = next_obs.copy() if not truncation else info["final_observation"]
         # trunctation은 강제 종료한 상황이므로 next_obs를 사용하여 target Q를 계산해야한다. 때문에, 실제 final_observation을 가져온다. 
