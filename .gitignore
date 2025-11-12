@@ -176,3 +176,5 @@ cython_debug/
 
 # Custom
 *_dev*
+runs/
+val/videos
