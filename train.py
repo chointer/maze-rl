@@ -92,8 +92,8 @@ if __name__ == "__main__":
     num_envs = 1            # 1만 가능
 
     # arguments: Env
-    height_range = [3, 7]
-    width_range = [3, 7]
+    height_range = [3, 4]
+    width_range = [3, 5]
     
     learning_rate = 1e-4
     buffer_size = 100000
@@ -214,7 +214,7 @@ if __name__ == "__main__":
         else:
             q_value = q_network(torch.Tensor(obs).to(device))
             actions = torch.argmax(q_value, dim=1).cpu().numpy()
-            actions -= 1
+            #actions -= 1
             # TODO. action은 -1부터 시작하는데, Qnetwork에서 행동 index는 0부터 시작한다. 지금은 index에 1을 빼줌으로써 맞춰줬지만, 나중에 환경에서 행동이 0부터 시작하게 수정하면 편할 것이다.
 
         # ===== Step =====
@@ -264,19 +264,18 @@ if __name__ == "__main__":
         if global_step > learning_starts:
             if global_step % train_frequency == 0:
                 data = rb.sample(batch_size)
-                mapped_actions_indices = (data.actions + 1).long()
+                #mapped_actions_indices = (data.actions + 1).long()
 
                 with torch.no_grad():
                     next_obs_tensor_batch = data.next_observations.float().to(device)
                     target_max, _ = target_network(next_obs_tensor_batch).max(dim=1)
                     td_target = data.rewards.flatten() + gamma * target_max * (1 - data.dones.flatten())
                 obs_tensor_batch = data.observations.float().to(device)
-                old_val = q_network(obs_tensor_batch).gather(1, mapped_actions_indices).squeeze()
+                old_val = q_network(obs_tensor_batch).gather(1, data.actions).squeeze()
                 loss = F.mse_loss(td_target, old_val)
 
-                if global_step % 100 == 0:
-                    writer.add_scalar("losses/td_loss", loss, global_step)
-                    writer.add_scalar("losses/q_values", old_val.mean().item(), global_step)
+                writer.add_scalar("losses/td_loss", loss.item(), global_step)
+                writer.add_scalar("losses/q_values", old_val.mean().item(), global_step)
 
                 # Optimze
                 optimizer.zero_grad()
@@ -302,7 +301,7 @@ if __name__ == "__main__":
 
                     q_value = q_network(observ)
                     action = torch.argmax(q_value, dim=1).item()
-                    action -= 1
+                    #action -= 1
                 return action
             
             q_network.eval()
@@ -322,10 +321,12 @@ if __name__ == "__main__":
 
         # ===== print status =====
         if global_step % eval_frequency == 0:
-            print_txt = f"[{global_step}/{total_timesteps}]\t"
+            print_txt = f"[{global_step}/{total_timesteps}]\teps:{epsilon:.2f}\t"
             if global_step > learning_starts:
-                print_txt += f"tr_l:{loss.item():.5f}\t"
-                print_txt += f"val_r:{evaluation_result['mean_ep_returns']:.2f}\t unefficiency:{np.mean(evaluation_result['agent_moves']/evaluation_result['ep_min_moves']):.2f}"
+                if 'loss' in locals():
+                    print_txt += f"tr_l:{loss.item():.5f}\t"
+                if 'evaluation_result' in locals():
+                    print_txt += f"val_r:{evaluation_result['mean_ep_returns']:.2f}\t uneff.:{np.mean(evaluation_result['agent_moves']/evaluation_result['ep_min_moves']):.2f}"
             print(print_txt)
 
         # ====================
