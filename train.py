@@ -2,6 +2,7 @@ import random
 import time
 from tqdm import tqdm
 import numpy as np
+from pathlib import Path
 
 import torch
 import torch.nn as nn
@@ -83,7 +84,6 @@ if __name__ == "__main__":
     #      Arguments
     # ====================
     env_id = "gym_maze/Maze-v0"
-    run_name = "first_test"
     exp_name = "dqn_00"
     seed = 42
     torch_deterministic = True
@@ -97,10 +97,13 @@ if __name__ == "__main__":
     
     learning_rate = 1e-4
     buffer_size = 100000
-    total_timesteps = 10000000
-    learning_starts = 80000
+    total_timesteps = 1000000 #10000000
+    learning_starts = 20000 #80000
     train_frequency = 4
     truncation_limit = 1000
+
+    save_frequency = 1000000
+    eval_frequency = 10000
 
     # arguments: Epsilon Greedy
     start_e = 1
@@ -116,13 +119,22 @@ if __name__ == "__main__":
     # arguments: Evaluation
     n_episode_eval = 10
 
+
+
     # ====================
     #      Initialize
     # ====================
-    run_name = f"{env_id}__{exp_name}__{seed}"
+    run_idx = 0
+    run_name = f"{env_id}__{exp_name}__{run_idx:02}"
+    save_dir = Path(f"runs/{run_name}")
+    while save_dir.exists() and save_dir.is_dir():
+        run_idx += 1
+        run_name = f"{env_id}__{exp_name}__{run_idx:02}"
+        save_dir = Path(f"runs/{run_name}")
+    (save_dir / "weights").mkdir(parents=True)
 
     # ===== Tensorboard =====
-    writer = SummaryWriter(f"runs/{run_name}")
+    writer = SummaryWriter(save_dir)
     # writer.add_text(
     #     "hyperparameters",
     #     "|param|value|\n|-|-|\n%s" % ("\n".join([f"|{key}|{value}|" for key, value in vars(args).items()])),
@@ -165,7 +177,8 @@ if __name__ == "__main__":
     for r_name, r in rewards_eval.items():
         env_eval.reward_manager.add(r_name, r[0], r[1])
     evaluator = Evaluator(env_eval)
-    
+    best_eval_return = -float('inf')
+
     # ===== Init.Networks =====
     obs_shape = envs.single_observation_space.shape     # Shape(H, W, 4 + 2)
     n_actions = envs.single_action_space.n              # if hasattr(envs, "single_action_space") else envs.action_space.n
@@ -173,7 +186,8 @@ if __name__ == "__main__":
     optimizer = optim.Adam(q_network.parameters(), lr=learning_rate)
     target_network = QNetwork(obs_shape, n_actions).to(device)
     target_network.load_state_dict(q_network.state_dict())
-    
+    q_network.train()
+
     # ===== Init.ReplayBuffer =====
     rb = ReplayBuffer(
         buffer_size,                   # Buffer Size
@@ -229,7 +243,6 @@ if __name__ == "__main__":
             """
             for info in infos["final_info"]:
                 if info and "episode" in info:
-                    print(f"global_step={global_step}, episodic_return={info['episode']['r']}, moves={info['move_count']}")
                     writer.add_scalar("charts/episodic_return", info["episode"]["r"], global_step)
                     writer.add_scalar("charts/episodic_length", info["episode"]["l"], global_step)
 
@@ -254,17 +267,17 @@ if __name__ == "__main__":
                 mapped_actions_indices = (data.actions + 1).long()
 
                 with torch.no_grad():
-                    next_obs_tensor_batch = data.next_observations.float().permute(0, 3, 1, 2).to(device)
+                    next_obs_tensor_batch = data.next_observations.float().to(device)
                     target_max, _ = target_network(next_obs_tensor_batch).max(dim=1)
                     td_target = data.rewards.flatten() + gamma * target_max * (1 - data.dones.flatten())
-                obs_tensor_batch = data.observations.float().permute(0, 3, 1, 2).to(device)
+                obs_tensor_batch = data.observations.float().to(device)
                 old_val = q_network(obs_tensor_batch).gather(1, mapped_actions_indices).squeeze()
                 loss = F.mse_loss(td_target, old_val)
 
                 if global_step % 100 == 0:
                     writer.add_scalar("losses/td_loss", loss, global_step)
                     writer.add_scalar("losses/q_values", old_val.mean().item(), global_step)
-                    
+
                 # Optimze
                 optimizer.zero_grad()
                 loss.backward()
@@ -276,6 +289,59 @@ if __name__ == "__main__":
                     target_network_param.data.copy_(
                         tau * q_network_param.data + (1.0 - tau) * target_network_param.data
                     )
-    
+        
+        # ====================
+        #     Evaluation
+        # ====================
+        if global_step % eval_frequency == 0 and global_step > learning_starts:
+            def agent_fn(observ):
+                with torch.no_grad():
+                    observ = torch.Tensor(observ).to(device)
+                    if observ.ndim == 3:
+                        observ = observ.unsqueeze(0)
+
+                    q_value = q_network(observ)
+                    action = torch.argmax(q_value, dim=1).item()
+                    action -= 1
+                return action
+            
+            q_network.eval()
+            evaluation_result = evaluator.evaluate(agent_fn, n_episodes=10)
+            writer.add_scalar("eval/mean_ep_returns", evaluation_result['mean_ep_returns'], global_step)
+            writer.add_scalar("eval/moves_per_shortest", np.mean(evaluation_result['agent_moves']/evaluation_result['ep_min_moves']), global_step)
+            q_network.train()
+
+            if evaluation_result['mean_ep_returns'] > best_eval_return:
+                best_eval_return = evaluation_result['mean_ep_returns']
+                torch.save({
+                    'global_step': global_step,
+                    'q_network_state_dict': q_network.state_dict(),
+                }, f"{save_dir}/weights/best.pt")
+                print(f"New best.pt Saved: {save_dir}/weights/best.pt")
+
+
+        # ===== print status =====
+        if global_step % eval_frequency == 0:
+            print_txt = f"[{global_step}/{total_timesteps}]\t"
+            if global_step > learning_starts:
+                print_txt += f"tr_l:{loss.item():.5f}\t"
+                print_txt += f"val_r:{evaluation_result['mean_ep_returns']:.2f}\t unefficiency:{np.mean(evaluation_result['agent_moves']/evaluation_result['ep_min_moves']):.2f}"
+            print(print_txt)
+
+        # ====================
+        #     Freq. Save
+        # ====================
+        if global_step % save_frequency == 0 and global_step > learning_starts:
+            checkpoint_path = f"{save_dir}/weights/checkpoint_{global_step}.pt"
+            torch.save({
+                'global_step': global_step,
+                'q_network_state_dict': q_network.state_dict(),
+                #'target_network_state_dict': target_network.state_dict(),
+                'optimizer_state_dict': optimizer.state_dict(),
+                'epsilon': epsilon,
+            }, checkpoint_path)
+            print(f"Checkpoint Saved: {checkpoint_path}")
+
+
     envs.close()
     writer.close()

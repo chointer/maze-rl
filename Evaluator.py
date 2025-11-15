@@ -19,13 +19,16 @@ class Evaluator:
     
     def evaluate(self, agent_fn:Callable, n_episodes:int=10, seed=None, max_steps=10000):
         ep_returns = np.zeros(n_episodes)
+        min_moves = np.zeros(n_episodes)
+        agent_moves = np.zeros(n_episodes)
 
         for i in range(n_episodes):
             # === Reset ===
             if seed is not None:
-                obs, _ = self.env.reset(seed=seed + i)
+                obs, info = self.env.reset(seed=seed + i)
             else:
-                obs, _ = self.env.reset()
+                obs, info = self.env.reset()
+            min_moves[i] = self.env.distance_map[*info['agent_location']]
 
             # === Run ===
             termination, truncation = False, False
@@ -36,9 +39,18 @@ class Evaluator:
                 next_obs, reward, termination, truncation, info = self.env.step(action)
                 ep_returns[i] += reward
                 obs = next_obs
+                steps += 1
 
             if steps >= max_steps:
                 print(f"[Evaluator Warning] Episode {i} reached max_step ({max_steps})")
-        return np.mean(ep_returns), ep_returns
+            
+            agent_moves[i] = info['move_count']
+
+        return {
+            'mean_ep_returns': np.mean(ep_returns),
+            'all_ep_returns': ep_returns,
+            'ep_min_moves': min_moves,
+            'agent_moves': agent_moves,
+        }
 
 
