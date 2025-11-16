@@ -3,6 +3,8 @@ import time
 from tqdm import tqdm
 import numpy as np
 from pathlib import Path
+import yaml
+from types import SimpleNamespace
 
 import torch
 import torch.nn as nn
@@ -79,59 +81,42 @@ def make_maze_env(env_id, seed, height_range, width_range, truncation_limit, rew
     return thunk
 
 
+def dict_to_ns(d):
+    ns = {}
+    for k, v in d.items():
+        if isinstance(v, dict):
+            ns[k] = dict_to_ns(v)
+        else:
+            ns[k] = v
+    return SimpleNamespace(**ns)
+
+def load_config(path="config.yaml"):
+    with open(path, "r") as f:
+        config = yaml.safe_load(f)
+    return dict_to_ns(config)
+
+
 if __name__ == "__main__":
     # ====================
     #      Arguments
     # ====================
-    env_id = "gym_maze/Maze-v0"
-    exp_name = "dqn_00"
-    seed = 42
-    torch_deterministic = True
-    track = False
-    cuda = False
-    num_envs = 1            # 1만 가능
-
-    # arguments: Env
-    height_range = [3, 4]
-    width_range = [3, 5]
-    
-    learning_rate = 1e-4
-    buffer_size = 100000
-    total_timesteps = 1000000 #10000000
-    learning_starts = 20000 #80000
-    train_frequency = 4
-    truncation_limit = 1000
-
-    save_frequency = 1000000
-    eval_frequency = 10000
-
-    # arguments: Epsilon Greedy
-    start_e = 1
-    end_e = 0.01
-    exploration_fraction = 0.10
-
-    # arguments: Training
-    batch_size = 8
-    gamma = 0.99
-    target_network_frequency = 1000
-    tau = 1.0
-
-    # arguments: Evaluation
-    n_episode_eval = 10
-
-
+    config_path = "config.yaml"
+    cfg = load_config(config_path)
 
     # ====================
     #      Initialize
     # ====================
     run_idx = 0
-    run_name = f"{env_id}__{exp_name}__{run_idx:02}"
+    run_name = f"{cfg.env_id}__{cfg.exp_name}__{run_idx:02}"
     save_dir = Path(f"runs/{run_name}")
     while save_dir.exists() and save_dir.is_dir():
         run_idx += 1
-        run_name = f"{env_id}__{exp_name}__{run_idx:02}"
+        run_name = f"{cfg.env_id}__{cfg.exp_name}__{run_idx:02}"
         save_dir = Path(f"runs/{run_name}")
     (save_dir / "weights").mkdir(parents=True)
+    
+    loss = None
+    evaluation_result = None
 
     # ===== Tensorboard =====
     writer = SummaryWriter(save_dir)
@@ -141,29 +126,29 @@ if __name__ == "__main__":
     # )
 
     # ===== Seed =====
-    random.seed(seed)
-    np_rng = np.random.default_rng(seed=seed)
-    torch.manual_seed(seed)
-    torch.backends.cudnn.deterministic = torch_deterministic   # ?
+    random.seed(cfg.seed)
+    np_rng = np.random.default_rng(seed=cfg.seed)
+    torch.manual_seed(cfg.seed)
+    torch.backends.cudnn.deterministic = cfg.torch_deterministic   # ?
 
-    device = torch.device("cuda" if torch.cuda.is_available() and cuda else "cpu")
+    device = torch.device("cuda" if torch.cuda.is_available() and cfg.cuda else "cpu")
 
     # ===== Init.Env =====
     rewards = {
         'goal': (5, None),
         'friction': (None, 0.01),
-        'manhattan_dist': (0.02, None),
-        'shortest_path': (0.05, None),
+        'manhattan_dist': (0.03, None),
+        'shortest_path': (0.1, None),
     }
     envs = gym.vector.SyncVectorEnv([
         make_maze_env(
-            env_id, 
-            seed + i, 
-            height_range=height_range, 
-            width_range=width_range, 
-            truncation_limit=truncation_limit, 
+            cfg.env_id, 
+            cfg.seed + i, 
+            height_range=cfg.height_range, 
+            width_range=cfg.width_range, 
+            truncation_limit=cfg.truncation_limit, 
             rewards_dict=rewards
-        ) for i in range(num_envs)
+        ) for i in range(cfg.num_envs)
     ])
     assert isinstance(envs.single_action_space, gym.spaces.Discrete), "only discrete action space is supported"
 
@@ -172,8 +157,8 @@ if __name__ == "__main__":
         'goal': (5, None),
         'friction': (None, 0.01),
     }
-    env_eval = gym.make(env_id, render_mode="rgb_array", height_range=height_range, width_range=width_range)
-    env_eval = gym.wrappers.TimeLimit(env_eval, truncation_limit)
+    env_eval = gym.make(cfg.env_id, render_mode="rgb_array", height_range=cfg.height_range, width_range=cfg.width_range)
+    env_eval = gym.wrappers.TimeLimit(env_eval, cfg.truncation_limit)
     for r_name, r in rewards_eval.items():
         env_eval.reward_manager.add(r_name, r[0], r[1])
     evaluator = Evaluator(env_eval)
@@ -183,14 +168,14 @@ if __name__ == "__main__":
     obs_shape = envs.single_observation_space.shape     # Shape(H, W, 4 + 2)
     n_actions = envs.single_action_space.n              # if hasattr(envs, "single_action_space") else envs.action_space.n
     q_network = QNetwork(obs_shape, n_actions).to(device)
-    optimizer = optim.Adam(q_network.parameters(), lr=learning_rate)
+    optimizer = optim.Adam(q_network.parameters(), lr=cfg.learning_rate)
     target_network = QNetwork(obs_shape, n_actions).to(device)
     target_network.load_state_dict(q_network.state_dict())
     q_network.train()
 
     # ===== Init.ReplayBuffer =====
     rb = ReplayBuffer(
-        buffer_size,                   # Buffer Size
+        cfg.buffer_size,                   # Buffer Size
         envs.single_observation_space,      # Observation Space
         envs.single_action_space,           # Action Space
         device,
@@ -204,18 +189,17 @@ if __name__ == "__main__":
     # ====================
     start_time = time.time()
 
-    obs, _ = envs.reset(seed=seed)       # return obs, info
+    obs, _ = envs.reset(seed=cfg.seed)       # return obs, info
 
-    for global_step in tqdm(range(total_timesteps)):
+    for global_step in tqdm(range(cfg.total_timesteps)):
         # ===== Action (Epsilon Greedy) =====
-        epsilon = linear_schedule(start_e, end_e, exploration_fraction * total_timesteps, global_step)      # 전체 학습 스텝의 10% 동안 start_e에서 end_e까지 선형으로 변한다.
+        epsilon = linear_schedule(cfg.start_e, cfg.end_e, cfg.exploration_fraction * cfg.total_timesteps, global_step)      # 전체 학습 스텝의 10% 동안 start_e에서 end_e까지 선형으로 변한다.
         if np_rng.random() < epsilon:
             actions = np.array([envs.single_action_space.sample() for _ in range(envs.num_envs)])
         else:
             q_value = q_network(torch.Tensor(obs).to(device))
             actions = torch.argmax(q_value, dim=1).cpu().numpy()
             #actions -= 1
-            # TODO. action은 -1부터 시작하는데, Qnetwork에서 행동 index는 0부터 시작한다. 지금은 index에 1을 빼줌으로써 맞춰줬지만, 나중에 환경에서 행동이 0부터 시작하게 수정하면 편할 것이다.
 
         # ===== Step =====
         next_obs, rewards, terminations, truncations, infos = envs.step(actions)   # np.ndarray, float, bool, bool, dict
@@ -261,21 +245,22 @@ if __name__ == "__main__":
         # ====================
         #       Train
         # ====================
-        if global_step > learning_starts:
-            if global_step % train_frequency == 0:
-                data = rb.sample(batch_size)
+        if global_step > cfg.learning_starts:
+            if global_step % cfg.train_frequency == 0:
+                data = rb.sample(cfg.batch_size)
                 #mapped_actions_indices = (data.actions + 1).long()
 
                 with torch.no_grad():
                     next_obs_tensor_batch = data.next_observations.float().to(device)
                     target_max, _ = target_network(next_obs_tensor_batch).max(dim=1)
-                    td_target = data.rewards.flatten() + gamma * target_max * (1 - data.dones.flatten())
+                    td_target = data.rewards.flatten() + cfg.gamma * target_max * (1 - data.dones.flatten())
                 obs_tensor_batch = data.observations.float().to(device)
                 old_val = q_network(obs_tensor_batch).gather(1, data.actions).squeeze()
                 loss = F.mse_loss(td_target, old_val)
 
                 writer.add_scalar("losses/td_loss", loss.item(), global_step)
                 writer.add_scalar("losses/q_values", old_val.mean().item(), global_step)
+                writer.add_scalar("losses/lr", optimizer.param_groups[0]['lr'], global_step)
 
                 # Optimze
                 optimizer.zero_grad()
@@ -283,16 +268,16 @@ if __name__ == "__main__":
                 optimizer.step()
             
             # Update Target Network
-            if global_step % target_network_frequency == 0:
+            if global_step % cfg.target_network_frequency == 0:
                 for target_network_param, q_network_param in zip(target_network.parameters(), q_network.parameters()):
                     target_network_param.data.copy_(
-                        tau * q_network_param.data + (1.0 - tau) * target_network_param.data
+                        cfg.tau * q_network_param.data + (1.0 - cfg.tau) * target_network_param.data
                     )
         
         # ====================
         #     Evaluation
         # ====================
-        if global_step % eval_frequency == 0 and global_step > learning_starts:
+        if global_step % cfg.eval_frequency == 0 and global_step > cfg.learning_starts:
             def agent_fn(observ):
                 with torch.no_grad():
                     observ = torch.Tensor(observ).to(device)
@@ -305,7 +290,7 @@ if __name__ == "__main__":
                 return action
             
             q_network.eval()
-            evaluation_result = evaluator.evaluate(agent_fn, n_episodes=10)
+            evaluation_result = evaluator.evaluate(agent_fn, n_episodes=cfg.n_episode_eval)
             writer.add_scalar("eval/mean_ep_returns", evaluation_result['mean_ep_returns'], global_step)
             writer.add_scalar("eval/moves_per_shortest", np.mean(evaluation_result['agent_moves']/evaluation_result['ep_min_moves']), global_step)
             q_network.train()
@@ -320,19 +305,19 @@ if __name__ == "__main__":
 
 
         # ===== print status =====
-        if global_step % eval_frequency == 0:
-            print_txt = f"[{global_step}/{total_timesteps}]\teps:{epsilon:.2f}\t"
-            if global_step > learning_starts:
-                if 'loss' in locals():
+        if global_step % cfg.eval_frequency == 0:
+            print_txt = f"[{global_step}/{cfg.total_timesteps}]\teps:{epsilon:.2f}\t"
+            if global_step > cfg.learning_starts:
+                if loss is not None:
                     print_txt += f"tr_l:{loss.item():.5f}\t"
-                if 'evaluation_result' in locals():
+                if evaluation_result is not None:
                     print_txt += f"val_r:{evaluation_result['mean_ep_returns']:.2f}\t uneff.:{np.mean(evaluation_result['agent_moves']/evaluation_result['ep_min_moves']):.2f}"
             print(print_txt)
 
         # ====================
         #     Freq. Save
         # ====================
-        if global_step % save_frequency == 0 and global_step > learning_starts:
+        if global_step % cfg.save_frequency == 0 and global_step > cfg.learning_starts:
             checkpoint_path = f"{save_dir}/weights/checkpoint_{global_step}.pt"
             torch.save({
                 'global_step': global_step,

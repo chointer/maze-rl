@@ -1,0 +1,35 @@
+# === arguments: Run ===
+env_id: "gym_maze/Maze-v0"
+exp_name: "dqn_00"
+seed: 42
+torch_deterministic: True
+cuda: False
+num_envs: 1             # '1'만 가능
+
+# === arguments: Env ===
+height_range: [3, 4]
+width_range: [3, 5]
+
+learning_rate: 0.0001
+buffer_size: 10000        #100000
+total_timesteps: 1000000  #10000000
+learning_starts: 20000    #80000
+train_frequency: 4
+truncation_limit: 1000
+
+save_frequency: 1000000
+eval_frequency: 10000
+
+# arguments: Epsilon Greedy
+start_e: 1
+end_e: 0.01
+exploration_fraction: 0.10
+
+# arguments: Training
+batch_size: 16
+gamma: 0.99
+target_network_frequency: 1000
+tau: 1.0
+
+# arguments: Evaluation
+n_episode_eval: 10
