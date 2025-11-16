@@ -30,7 +30,7 @@ class QNetwork(nn.Module):
         elif len(obs_shape) == 3:
             input_h, input_w, input_c = obs_shape
         else:
-            raise ValueError(f"Unsupported observation space shape dimension: {len(env.observation_space.shape)}.")
+            raise ValueError(f"Unsupported observation space shape dimension: {len(obs_shape)}.")
         input_wh = input_h * input_w
         
         self.network = nn.Sequential(

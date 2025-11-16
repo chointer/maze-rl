@@ -17,7 +17,7 @@ learning_starts: 20000    #80000
 train_frequency: 4
 truncation_limit: 1000
 
-save_frequency: 1000000
+save_frequency: 100000
 eval_frequency: 10000
 
 # arguments: Epsilon Greedy
