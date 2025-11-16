@@ -9,7 +9,12 @@ num_envs: 1             # '1'만 가능
 # === arguments: Env ===
 height_range: [3, 4]
 width_range: [3, 5]
-
+reward:
+  goal: [5, null]
+  friction: [null, 0.01]
+  manhattan_dist: [0.03, null]
+  shortest_path: [0.1, null]
+  
 learning_rate: 0.0001
 buffer_size: 10000        #100000
 total_timesteps: 1000000  #10000000

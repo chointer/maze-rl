@@ -134,12 +134,18 @@ if __name__ == "__main__":
     device = torch.device("cuda" if torch.cuda.is_available() and cfg.cuda else "cpu")
 
     # ===== Init.Env =====
-    rewards = {
-        'goal': (5, None),
-        'friction': (None, 0.01),
-        'manhattan_dist': (0.03, None),
-        'shortest_path': (0.1, None),
-    }
+    if hasattr(cfg, 'reward') and cfg.reward is not None:
+        rewards = vars(cfg.reward)
+        """rewards = {
+            'goal': (5, None),
+            'friction': (None, 0.01),
+            'manhattan_dist': (0.03, None),
+            'shortest_path': (0.1, None),
+        }
+        """
+    else:
+        rewards = {}
+
     envs = gym.vector.SyncVectorEnv([
         make_maze_env(
             cfg.env_id, 
