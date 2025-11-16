@@ -19,4 +19,4 @@ rewards = {
 for r_name, r in rewards.items():
     env.reward_manager.add(r_name, r[0], r[1])
 
-play_discrete(env, noop=-1)
+play_discrete(env, noop=4)
