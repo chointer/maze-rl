@@ -178,3 +178,4 @@ cython_debug/
 *_dev*
 runs/
 val/videos
+val/*.mp4
