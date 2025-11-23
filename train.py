@@ -5,6 +5,7 @@ import numpy as np
 from pathlib import Path
 import yaml
 from types import SimpleNamespace
+import shutil
 
 import torch
 import torch.nn as nn
@@ -96,13 +97,7 @@ def load_config(path="config.yaml"):
     return dict_to_ns(config)
 
 
-if __name__ == "__main__":
-    # ====================
-    #      Arguments
-    # ====================
-    config_path = "config.yaml"
-    cfg = load_config(config_path)
-
+def train_dqn(cfg):
     # ====================
     #      Initialize
     # ====================
@@ -114,7 +109,8 @@ if __name__ == "__main__":
         run_name = f"{cfg.env_id}__{cfg.exp_name}__{run_idx:02}"
         save_dir = Path(f"runs/{run_name}")
     (save_dir / "weights").mkdir(parents=True)
-    
+    #shutil.copy2(config_path, save_dir / "config.yaml")        # TODO.
+ 
     loss = None
     evaluation_result = None
 
@@ -197,7 +193,7 @@ if __name__ == "__main__":
 
     obs, _ = envs.reset(seed=cfg.seed)       # return obs, info
 
-    for global_step in tqdm(range(cfg.total_timesteps)):
+    for global_step in range(cfg.total_timesteps):
         # ===== Action (Epsilon Greedy) =====
         epsilon = linear_schedule(cfg.start_e, cfg.end_e, cfg.exploration_fraction * cfg.total_timesteps, global_step)      # 전체 학습 스텝의 10% 동안 start_e에서 end_e까지 선형으로 변한다.
         if np_rng.random() < epsilon:
@@ -337,3 +333,13 @@ if __name__ == "__main__":
 
     envs.close()
     writer.close()
+
+
+
+if __name__ == "__main__":
+    # ====================
+    #      Arguments
+    # ====================
+    config_path = "config.yaml"
+    cfg = load_config(config_path)
+    train_dqn(cfg)
