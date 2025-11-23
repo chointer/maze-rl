@@ -11,7 +11,8 @@ if maze_path not in sys.path:
 import gym_maze
 
 
-model_path = "/home/sangho/workspace/maze-rl/runs/gym_maze/Maze-v0__dqn_00__00/weights/best.pt"
+model_paths = [f"/home/sangho/workspace/maze-rl/runs/gym_maze/Maze-v0__dqn_0{i}__00/weights/best.pt" for i in range(6)]
+
 height_range = [3, 4]
 width_range = [3, 5]
 
@@ -22,10 +23,11 @@ rewards = {
     'shortest_path': (0.1, None),
 }
 
-output_filename = "validation_00.mp4"
-truncation_limit = 100
-n_episodes = 5
-fps = 4
+output_filenames = [f"videos/small_maze_trains/val_dqn_0{i}__00_best.mp4" for i in range(6)]
+
+truncation_limit = 50
+n_episodes = 6
+fps = 5
 
 # =======================================================================
 
@@ -75,68 +77,70 @@ action_to_direction = {
 }
 
 # =======================================================================
-# ===== Init. Env =====
-env = gym.make("gym_maze/Maze-v0", render_mode="rgb_array", height_range=height_range, width_range=width_range)
-env = gym.wrappers.TimeLimit(env, truncation_limit)
+for model_path, output_filename in zip(model_paths, output_filenames):
+    # ===== Init. Env =====
+    env = gym.make("gym_maze/Maze-v0", render_mode="rgb_array", height_range=height_range, width_range=width_range)
+    env = gym.wrappers.TimeLimit(env, truncation_limit)
 
-for r_name, r in rewards.items():
-    env.reward_manager.add(r_name, r[0], r[1])
+    for r_name, r in rewards.items():
+        env.reward_manager.add(r_name, r[0], r[1])
 
-obs_shape = env.observation_space.shape     # Shape(H, W, 4 + 2)
-n_actions = env.action_space.n              # if hasattr(envs, "single_action_space") else envs.action_space.n
-
-
-# ===== Init. Agent =====
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-ckpt = torch.load(model_path)
-
-q_network = QNetwork(obs_shape, n_actions)
-q_network.load_state_dict(ckpt['q_network_state_dict'])
-#q_network.load_state_dict(ckpt)
-q_network.eval()
+    obs_shape = env.observation_space.shape     # Shape(H, W, 4 + 2)
+    n_actions = env.action_space.n              # if hasattr(envs, "single_action_space") else envs.action_space.n
 
 
-# ===== Run =====
-obs, info = env.reset()
+    # ===== Init. Agent =====
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    ckpt = torch.load(model_path)
 
-frame = env.render()
-h, w, c = frame.shape
+    q_network = QNetwork(obs_shape, n_actions)
+    q_network.load_state_dict(ckpt['q_network_state_dict'])
+    #q_network.load_state_dict(ckpt)
+    q_network.eval()
 
-fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-out = cv2.VideoWriter(output_filename, fourcc, fps, (h, w))
 
-for i in range(n_episodes):
+    # ===== Run =====
     obs, info = env.reset()
-    draw_infos = env.get_draw_infos()
-    sq_size = draw_infos['pix_square_size']
-    startx = draw_infos['startx']
-    starty = draw_infos['starty']
 
-    termination, truncation = False, False
-    steps = 0
-    
-    while not (termination or truncation):
-        with torch.no_grad():
-            observ = torch.Tensor(obs).to(device).unsqueeze(0)
-            q_values = q_network(observ)
-            action = torch.argmax(q_values, dim=1).item()
+    frame = env.render()
+    h, w, c = frame.shape
+
+    fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+    out = cv2.VideoWriter(output_filename, fourcc, fps, (h, w))
+
+    for i in range(n_episodes):
+        obs, info = env.reset()
+        draw_infos = env.get_draw_infos()
+        sq_size = draw_infos['pix_square_size']
+        startx = draw_infos['startx']
+        starty = draw_infos['starty']
+
+        termination, truncation = False, False
+        steps = 0
         
-        # ===== Frame Write =====
-        frame = env.render()
-        ay, ax = info['agent_location']
-        for i, q_val in enumerate(q_values[0].cpu().numpy()):
-            dy, dx = action_to_direction[i]
-            text_x = startx + (ax + dx + 0.5) * sq_size
-            text_y = starty + (ay + dy + 0.5) * sq_size
-            if i == action:
-                draw_text(frame, f"{q_val:.2f}", text_x, text_y, color=(50, 255, 50))
-            else:
-                draw_text(frame, f"{q_val:.2f}", text_x, text_y, color=(0, 0, 0))
-        bgr_frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
-        out.write(bgr_frame)
+        while not (termination or truncation):
+            with torch.no_grad():
+                observ = torch.Tensor(obs).to(device).unsqueeze(0)
+                q_values = q_network(observ)
+                action = torch.argmax(q_values, dim=1).item()
+            
+            # ===== Frame Write =====
+            frame = env.render()
+            ay, ax = info['agent_location']
+            for i, q_val in enumerate(q_values[0].cpu().numpy()):
+                dy, dx = action_to_direction[i]
+                text_x = startx + (ax + dx + 0.5) * sq_size
+                text_y = starty + (ay + dy + 0.5) * sq_size
+                if i == action:
+                    draw_text(frame, f"{q_val:.2f}", text_x, text_y, color=(50, 255, 50))
+                else:
+                    draw_text(frame, f"{q_val:.2f}", text_x, text_y, color=(0, 0, 0))
+            bgr_frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
+            out.write(bgr_frame)
 
-        
-        next_obs, reward, termination, truncation, info = env.step(action)
-        obs = next_obs
+            
+            next_obs, reward, termination, truncation, info = env.step(action)
+            obs = next_obs
 
-out.release()
+    out.release()
+    print(model_path, " --> ", output_filename)
