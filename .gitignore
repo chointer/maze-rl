@@ -179,3 +179,5 @@ cython_debug/
 runs/
 val/videos
 val/*.mp4
+val/figures
+configs
